@@ -47,11 +47,13 @@ interface SampleResult {
   guardPassed: boolean;
 }
 
-function parseSamples(argv: string[]): number {
-  const i = argv.indexOf('--samples');
-  const n = i >= 0 ? Number(argv[i + 1]) : 3;
-  return Number.isInteger(n) && n > 0 ? n : 3;
+function parseIntArg(argv: string[], flag: string, fallback: number): number {
+  const i = argv.indexOf(flag);
+  const n = i >= 0 ? Number(argv[i + 1]) : fallback;
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
 }
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function percentile(values: number[], p: number): number {
   if (values.length === 0) return 0;
@@ -69,20 +71,31 @@ async function main() {
 
   const { cases } = JSON.parse(readFileSync(join(evalDir, 'cases.json'), 'utf8')) as { cases: GoldenCase[] };
   const thresholds = JSON.parse(readFileSync(join(evalDir, 'thresholds.json'), 'utf8')) as Thresholds;
-  const samples = Math.max(parseSamples(process.argv), thresholds.minSamplesPerCase);
+  const samples = Math.max(parseIntArg(process.argv, '--samples', 3), thresholds.minSamplesPerCase);
+  // Free-tier Gemini keys are rate-limited per minute. Pace calls and retry
+  // empty responses so API throttling isn't scored as model failure.
+  const delayMs = parseIntArg(process.argv, '--delay-ms', 6500);
+  const retries = parseIntArg(process.argv, '--retries', 3);
   const client = new GeminiClient();
   const results: SampleResult[] = [];
 
   for (const c of cases) {
     for (let s = 1; s <= samples; s++) {
-      const started = Date.now();
-      const raw = await client.generateJSON<{ subject?: unknown; body?: unknown }>({
-        systemPrompt: SYSTEM_PROMPT,
-        userPrompt: buildUserPrompt(c.ctx),
-        temperature: GENERATION_TEMPERATURE,
-        maxOutputTokens: 400,
-      });
-      const latencyMs = Date.now() - started;
+      let raw: { subject?: unknown; body?: unknown } | null = null;
+      let latencyMs = 0;
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        if (attempt > 0) await sleep(15000 * attempt);
+        const started = Date.now();
+        raw = await client.generateJSON<{ subject?: unknown; body?: unknown }>({
+          systemPrompt: SYSTEM_PROMPT,
+          userPrompt: buildUserPrompt(c.ctx),
+          temperature: GENERATION_TEMPERATURE,
+          maxOutputTokens: 400,
+        });
+        latencyMs = Date.now() - started;
+        if (raw) break;
+      }
+      await sleep(delayMs);
       const output =
         raw && typeof raw.subject === 'string' && typeof raw.body === 'string'
           ? { subject: raw.subject.trim(), body: raw.body.trim() }
@@ -125,7 +138,7 @@ async function main() {
 
   // ---- report --------------------------------------------------------------
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const model = process.env.GEMINI_MODEL ?? 'default';
+  const model = process.env.GEMINI_MODEL ?? 'client default (gemini-client.ts)';
   const lines: string[] = [
     `# Dunning eval — ${stamp}`,
     '',

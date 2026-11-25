@@ -1,4 +1,3 @@
-// services/engine/src/wrapper/subscription-wrapper.ts
 //
 // The transactional wrapper around the subscription state machine.
 //
@@ -19,7 +18,7 @@
 //   transitions. Side effects from actor transitions (charge, VA creation,
 //   USSD push) are dispatched OUTSIDE the transaction by a higher layer.
 // - Doesn't define what a "transaction" is. That's the repo's problem.
-// - Doesn't know about HTTP. The gateway calls into this, not the other
+// - Doesn't know about HTTP. Route handlers call into this, not the other
 //   way around.
 
 import { createActor } from 'xstate';
@@ -54,7 +53,7 @@ export interface SubscriptionWrapperDeps {
 export interface ProcessEventInput {
   subscriptionId: string;
   event: SubscriptionEvent;
-  /** Idempotency key from the inbound webhook or gateway request. */
+  /** Idempotency key from the inbound webhook or API request. */
   idempotencyKey: string;
 }
 

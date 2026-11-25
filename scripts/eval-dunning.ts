@@ -5,7 +5,7 @@
 // scorecard to evals/dunning/results/. Exits non-zero if the run falls below
 // evals/dunning/thresholds.json, so it can gate prompt or model changes.
 //
-// Run:  cd services/engine && GEMINI_API_KEY=... npm run eval:dunning -- --samples 5
+// Run:  GEMINI_API_KEY=... npm run eval:dunning -- --samples 5
 //
 // Without GEMINI_API_KEY the script exits 0 and says it skipped.
 

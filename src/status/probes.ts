@@ -1,4 +1,3 @@
-// services/engine/src/status/probes.ts
 //
 // Dependency probes for the /status endpoint. Each probe is best-effort:
 // returns 'ok' if reachable, 'degraded' on any error, 'not_configured'

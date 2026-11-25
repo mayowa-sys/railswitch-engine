@@ -1,4 +1,3 @@
-// services/engine/src/webhooks/webhook-dispatcher.ts
 //
 // Dispatches webhook events to merchant-configured endpoints.
 // Events include subscription lifecycle changes, payment outcomes,

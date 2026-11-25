@@ -1,7 +1,6 @@
-// services/engine/src/routes/ai.ts
 //
 // AI routes — mounted under /v1/ai (API key + tenant scope).
-// and reached by the gateway proxy. Every endpoint validates input and
+// and authenticated by API key. Every endpoint validates input and
 // returns typed JSON.
 
 import { Router, type Request, type Response } from 'express';

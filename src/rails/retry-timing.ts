@@ -1,4 +1,3 @@
-// services/engine/src/rails/retry-timing.ts
 //
 // Smart retry timing for failed card charges. Pure function — no IO,
 // no scheduling, no Nomba calls. Returns when the next retry should fire.

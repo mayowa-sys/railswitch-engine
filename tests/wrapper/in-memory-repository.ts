@@ -1,4 +1,3 @@
-// services/engine/tests/wrapper/in-memory-repository.ts
 //
 // Test seam. Implements SubscriptionRepository without any database.
 // Mirrors the contract of the future Drizzle impl: transactions roll

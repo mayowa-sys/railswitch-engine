@@ -1,4 +1,3 @@
-// services/engine/tests/rails/retry-timing.test.ts
 //
 // Pure logic tests. Median jitter (rng = 0.5) makes timestamps exact.
 

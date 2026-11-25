@@ -1,4 +1,3 @@
-// services/engine/tests/state-machines/subscription.test.ts
 //
 // Pure state machine tests. No DB, no Nomba, no IO.
 // These run in <100ms total and don't need docker-compose up.

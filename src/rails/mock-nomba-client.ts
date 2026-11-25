@@ -1,9 +1,8 @@
-// services/engine/src/rails/mock-nomba-client.ts
 //
 // Deterministic mock implementation of NombaClient.
 //
 // Failure injection is driven by the merchantTxRef content, NOT by random
-// chance. Tests must be reproducible; demos must be reliable.
+// chance. Tests must be reproducible.
 //
 // CONVENTIONS
 // -----------

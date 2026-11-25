@@ -1,4 +1,3 @@
-// services/engine/src/wrapper/repository.ts
 //
 // Repository interface for the subscription wrapper.
 //

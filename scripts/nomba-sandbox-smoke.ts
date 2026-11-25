@@ -1,5 +1,5 @@
-// Test script — validates Nomba sandbox connectivity.
-// Run: cd services/engine && npx tsx scripts/test-nomba-sandbox.ts
+// Smoke test against the Nomba sandbox (needs NOMBA_* credentials).
+// Run: npx tsx scripts/nomba-sandbox-smoke.ts
 
 import { RealNombaClient } from '../src/rails/real-nomba-client.js';
 

@@ -1,4 +1,3 @@
-// services/engine/src/ai/retry-timing-model.ts
 //
 // ML-based retry timing scorer. Replaces the hard-snap rules in
 // rails/retry-timing.ts with a continuous scoring function over the

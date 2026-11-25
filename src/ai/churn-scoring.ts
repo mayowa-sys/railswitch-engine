@@ -1,4 +1,3 @@
-// services/engine/src/ai/churn-scoring.ts
 //
 // Churn risk scoring. Given a snapshot of a subscription's payment
 // history and state, returns a 0-1 probability that the customer will

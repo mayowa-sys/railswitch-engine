@@ -1,4 +1,3 @@
-// services/engine/src/rails/cascade-coordinator.ts
 //
 // Cascade Coordinator — drives the multi-rail dunning cascade.
 //
@@ -6,7 +5,6 @@
 // through retry → VA fallback → WhatsApp fallback → past_due.
 // Each cascade step is driven via BullMQ delayed jobs for proper timing.
 //
-// Landed: July 1 2026 (hackathon window)
 
 import { BillingHandler, type BillingResult } from './billing-handler.js';
 import { RailOrchestrator } from './orchestrator.js';

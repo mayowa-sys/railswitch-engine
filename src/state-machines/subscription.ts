@@ -1,4 +1,3 @@
-// services/engine/src/state-machines/subscription.ts
 //
 // RailSwitch subscription lifecycle state machine.
 //

@@ -1,4 +1,3 @@
-// services/engine/src/ai/churn-features.ts
 //
 // DB-facing feature extraction for churn scoring. Kept separate from
 // churn-scoring.ts so the pure model stays testable without a live

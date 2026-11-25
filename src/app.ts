@@ -89,7 +89,7 @@ app.use('/v1/subscriptions', ...tenant, subscriptionsRouter);
 app.use('/v1/invoices', ...tenant, invoicesRouter);
 app.use('/v1/payment-methods', ...tenant, paymentMethodsRouter);
 app.use('/v1/audit-logs', ...tenant, auditRouter);
-app.use('/v1/webhook-endpoints', ...tenant, webhookManagementRouter);
+app.use('/v1/webhooks', ...tenant, webhookManagementRouter);
 app.use('/v1/actions', ...tenant, merchantActionsRouter);
 app.use('/v1/ai', ...tenant, aiRouter);
 

@@ -1,4 +1,3 @@
-// services/engine/src/status/route.ts
 //
 // /status endpoint handler. Returns process info + dependency health.
 // Always returns 200 with structured JSON, even when deps are down —

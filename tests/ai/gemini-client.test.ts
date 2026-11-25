@@ -1,4 +1,3 @@
-// services/engine/tests/ai/gemini-client.test.ts
 //
 // Test the tiny Gemini HTTP shim. We inject a fake fetch — no real network.
 

@@ -1,4 +1,3 @@
-// services/engine/tests/status.test.ts
 //
 // Tests for the /status route handler. Probes are injected, so these
 // tests run with no infrastructure — no Postgres, no Redis, no network.

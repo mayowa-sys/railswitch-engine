@@ -1,4 +1,3 @@
-// services/engine/tests/ai/dunning-generator.test.ts
 //
 // Contract test for the dunning generator. We inject a mock GeminiClient
 // so no network calls happen; we assert:

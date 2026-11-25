@@ -1,9 +1,8 @@
-// services/engine/src/ai/gemini-client.ts
 //
 // Minimal Gemini API client. Uses Google's public generativelanguage.googleapis.com
 // REST endpoint — no SDK dependency, just fetch. Free tier (gemini-2.0-flash)
 // gives ~1500 requests/day and 1M tokens/min, which is more than enough for
-// personalized dunning messages at hackathon scale.
+// personalised dunning messages at small-merchant scale.
 //
 // The client is deliberately narrow: one method (`generateJSON`) that returns
 // parsed JSON. Anything richer belongs in the caller. Everything degrades to

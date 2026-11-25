@@ -1,4 +1,3 @@
-// services/engine/src/ai/dunning-generator.ts
 //
 // Personalized dunning message generator. Given customer + subscription
 // context, produces a subject line and body copy tailored to the
@@ -10,7 +9,7 @@
 //   - Otherwise we return the caller-supplied template fallback verbatim.
 //
 // This is the only place LLM output touches user-facing copy. Callers
-// (whatsapp-service, email-service, gateway routes) always pass a
+// (whatsapp-service, email-service, /v1/ai routes) always pass a
 // fallback so nothing user-visible depends on the LLM being available.
 
 import { getGeminiClient, type GeminiClient } from './gemini-client.js';

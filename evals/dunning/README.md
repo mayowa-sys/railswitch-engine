@@ -59,7 +59,7 @@ The offline test (`npm run test:ai`) checks, for every case:
 ## Running the live eval
 
 ```bash
-cd services/engine
+cd railswitch-engine
 GEMINI_API_KEY=... npm run eval:dunning -- --samples 5
 ```
 

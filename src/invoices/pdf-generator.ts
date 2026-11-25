@@ -1,4 +1,3 @@
-// services/engine/src/invoices/pdf-generator.ts
 //
 // Invoice PDF generation using PDFKit.
 // Generates professional invoices with RailSwitch branding.

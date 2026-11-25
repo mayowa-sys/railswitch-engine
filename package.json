@@ -1,6 +1,8 @@
 {
-  "name": "@railswitch/engine",
+  "name": "railswitch-engine",
   "version": "0.1.0",
+  "description": "Multi-tenant subscription billing and payment-recovery engine for Nigerian payment rails.",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "engines": {
@@ -18,7 +20,10 @@
     "format": "prettier --write src/",
     "migration:generate": "npx drizzle-kit generate",
     "migration:run": "npx drizzle-kit migrate",
-    "migration:push": "npx drizzle-kit push"
+    "migration:push": "npx drizzle-kit push",
+    "typecheck": "tsc --noEmit",
+    "db:up": "docker compose up -d",
+    "test:ci": "vitest run"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

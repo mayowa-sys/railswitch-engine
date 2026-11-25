@@ -1,4 +1,3 @@
-// services/engine/src/rails/whatsapp-service.ts
 //
 // WhatsApp Cloud API integration — Meta test number.
 //
@@ -6,7 +5,6 @@
 // the WhatsApp fallback stage. Uses Meta's test phone number
 // which works instantly for up to 5 pre-verified recipients.
 //
-// Landed: July 1 2026 (hackathon window)
 
 import { GlobalLogger } from '../utils/logger.js';
 import { generateDunningMessage } from '../ai/dunning-generator.js';

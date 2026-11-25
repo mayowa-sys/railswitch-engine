@@ -1,4 +1,3 @@
-// services/engine/tests/rails/mock-nomba-client.test.ts
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MockNombaClient } from '../../src/rails/mock-nomba-client.js';

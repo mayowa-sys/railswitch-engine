@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Typecheck, lint, test, build
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: railswitch
+          POSTGRES_PASSWORD: railswitch_dev
+          POSTGRES_DB: railswitch
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U railswitch"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgres://railswitch:railswitch_dev@localhost:5432/railswitch
+      REDIS_URL: redis://localhost:6379
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npx drizzle-kit migrate
+      # Every test must pass, including the database-backed tenant-isolation suite.
+      - run: npm test
+      - run: npm run build
+      - name: Docker image builds
+        run: docker build -t railswitch-engine:ci .
+
+  dunning-eval:
+    # Live model eval against Gemini. Skips itself when the secret is absent;
+    # fails when pass rates drop below evals/dunning/thresholds.json.
+    name: AI dunning eval
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run eval:dunning -- --samples 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dunning-eval-report
+          path: evals/dunning/results/
+          if-no-files-found: ignore

@@ -1,4 +1,3 @@
-// services/engine/tests/rails/orchestrator.test.ts
 //
 // These tests verify the orchestrator wires correctly to the NombaClient and
 // surfaces results faithfully. Full cascade behavior is the wrapper's job

@@ -1,4 +1,3 @@
-// services/engine/src/rails/real-nomba-client.ts
 //
 // Production NombaClient implementation — landed July 1 2026.
 // Translates between RailSwitch's NombaClient interface and Nomba's REST API.

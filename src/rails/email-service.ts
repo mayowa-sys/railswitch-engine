@@ -1,4 +1,3 @@
-// services/engine/src/rails/email-service.ts
 //
 // Transactional email service for payment notifications.
 // Uses a pluggable transport ( SMTP, SendGrid, Postmark, etc.)

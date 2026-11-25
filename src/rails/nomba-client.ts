@@ -1,4 +1,3 @@
-// services/engine/src/rails/nomba-client.ts
 //
 // NombaClient interface and shared types.
 //

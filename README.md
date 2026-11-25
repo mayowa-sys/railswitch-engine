@@ -1,204 +1,131 @@
-# Engine Service
+# RailSwitch Engine
 
-Node.js + TypeScript service. Owns the billing state machine, proration logic, multi-tenancy enforcement, and Nomba integration.
+[![CI](https://github.com/mayowa-sys/railswitch-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/mayowa-sys/railswitch-engine/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Owned by: Dev A (engine internals) + Dev B (Nomba rails)
+A multi-tenant subscription billing and **payment-recovery** engine for Nigerian payment rails.
 
-Runs on port 3001 in local dev. Not publicly exposed — gateway calls it via internal HTTP.
+In Nigeria a failed card charge is the normal case, not the edge case. When a renewal fails, RailSwitch doesn't just retry the card — it moves the customer down a cascade of rails (payday-aware retries → one-time virtual account → USSD → WhatsApp) until the money arrives, while guaranteeing the customer is **never charged twice** for the same cycle.
 
-See `docs/internal-api.md` for the HTTP contract this service exposes.
+TypeScript · Node.js 20 · Express · XState v5 · PostgreSQL 16 (row-level security) · Redis + BullMQ · Drizzle ORM · Vitest · Docker
 
-## Schema reference
+---
 
-All tenant-scoped tables carry a Postgres RLS policy (`merchant_id = current_setting('app.current_merchant_id')::text`) applied via the shared `merchantIsolationPolicy()` helper. The `merchants` table uses its own policy filtering on `id`. The `audit_log` table additionally enforces no-delete and no-update policies.
+## What makes it interesting
 
-### `src/schema/merchants.schema.ts`
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | `text` | Primary key, prefix `mer` |
-| `name` | `text` | Not null |
-| `email` | `varchar` | Not null, unique |
-| `company` | `varchar` | Not null |
-| `created_at` | `timestamp with time zone` | Default `now()` |
+| Problem | How the engine handles it |
+|---|---|
+| **Exactly-once charging** under duplicate, late or concurrent webhooks | Each subscription is a 12-state [XState machine](src/state-machines/subscription.ts) with guarded transitions. State changes go through a [transactional wrapper](src/wrapper/subscription-wrapper.ts) that takes a row lock (`SELECT … FOR UPDATE`), checks an optimistic `version`, and records processed event IDs — so a replayed or racing webhook can't move the machine twice. |
+| **Tenant isolation** that doesn't depend on every query remembering `WHERE merchant_id = …` | Postgres row-level security, actually enforced: each API request pins one connection that switches to an unprivileged role and sets the tenant ([src/db/client.ts](src/db/client.ts)). [Tests](tests/tenants/rls-enforcement.test.ts) prove cross-tenant reads, writes, updates, deletes and concurrent scopes are blocked by the database itself. |
+| **Recovering revenue**, not just reporting failure | A [cascade coordinator](src/rails/cascade-coordinator.ts) escalates across rails; a [pure retry-timing function](src/rails/retry-timing.ts) applies exponential backoff with jitter, snaps to Nigerian payday windows (25th–30th) and the 10:00–14:00 WAT liquidity window. |
+| **LLM-written customer messages** that can't embarrass a merchant | Gemini personalises dunning copy behind deterministic [guardrails](src/ai/dunning-checks.ts) (exact amount, exact account number, no threats, first name only, no card-like numbers). Anything that fails falls back to the merchant's template. An [eval harness](evals/dunning/README.md) scores the live model on a golden set, including a prompt-injection case. |
+| **Merchant integrations** | HMAC-signed outbound webhooks with delivery logs and replay ([dispatcher](src/webhooks/webhook-dispatcher.ts)); HMAC-verified inbound provider webhooks. |
 
-### `src/schema/api_keys.schema.ts`
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | `text` | Primary key, prefix `ak` |
-| `merchant_id` | `text` | Not null, references `merchants.id` |
-| `key_hash` | `text` | Not null, unique |
-| `key_prefix` | `text` | Not null |
-| `type` | `ApiKeyTypeEnum` | Enum: `live`, `test` |
-| `revoked_at` | `timestamp` | Nullable |
+## Architecture
 
-### `src/schema/customers.schema.ts`
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | `text` | Primary key, prefix `cus` |
-| `merchant_id` | `text` | Not null, references `merchants.id` |
-| `email` | `text` | Not null |
-| `name` | `text` | Nullable |
-| `phone` | `text` | Nullable |
-| `metadata` | `jsonb` | Nullable |
-| `created_at` | `timestamp with time zone` | Default `now()` |
-| `updated_at` | `timestamp with time zone` | Default `now()` |
+```
+                 Authorization: Bearer sk_<live|test>_…
+Merchant API ──────────────────────────────────────────────► /v1/*
+                                                              │ API-key auth (SHA-256 hash lookup, fail closed)
+                                                              │ pin connection · SET ROLE railswitch_app · set tenant
+                                                              ▼
+                                               Route handlers ──► SubscriptionWrapper
+                                                                     │ row lock + version check + idempotency
+                                                                     ▼
+Nomba webhooks ──► /webhooks/nomba (HMAC) ──────────────────► XState subscription machine
+                                                                     │ side effects
+                         BullMQ billing worker ◄──── Redis ◄─────────┤
+                                 │                                   ▼
+                                 └──► Rail orchestrator ──► card · virtual account · USSD · WhatsApp/email
+                                                                     │
+                                                          Outbound webhooks (HMAC) ──► merchant
+```
 
-### `src/schema/plans.schema.ts`
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | `text` | Primary key, prefix `plan` |
-| `merchant_id` | `text` | Not null, references `merchants.id` |
-| `name` | `text` | Not null |
-| `description` | `text` | Nullable |
-| `amount` | `bigint` | Not null (amount in kobo) |
-| `currency` | `text` | Not null, default `NGN` |
-| `interval` | `text` | Not null (e.g. `monthly`, `annual`) |
-| `interval_count` | `integer` | Not null |
-| `is_active` | `boolean` | Not null, default `true` |
-| `metadata` | `jsonb` | Default `{}` |
-| `created_at` | `timestamp with time zone` | Not null, default `now()` |
-| `updated_at` | `timestamp with time zone` | Not null, default `now()` |
+### Subscription lifecycle
 
-### `src/schema/subscriptions.schema.ts`
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | `text` | Primary key, prefix `sub` |
-| `merchant_id` | `text` | Not null, references `merchants.id` |
-| `customer_id` | `text` | Not null, references `customers.id` |
-| `plan_id` | `text` | Not null, references `plans.id` |
-| `policy` | `jsonb` | Not null, default `DunningPolicy` |
-| `state` | `SubscriptionStateEnum` | Not null, default `pending`. Enum: `pending`, `trialing`, `active`, `charging`, `retrying`, `va_fallback`, `ussd_fallback`, `whatsapp_fallback`, `paused`, `past_due`, `cancelled`, `refunded` |
-| `version` | `integer` | Not null, default `1` (optimistic concurrency) |
-| `retry_count` | `integer` | Not null, default `0` |
-| `last_failure_reason` | `text` | Nullable |
-| `last_failure_retryable` | `boolean` | Nullable |
-| `va_id` | `text` | Nullable |
-| `va_expires_at` | `timestamp with time zone` | Nullable |
-| `current_invoice_id` | `text` | Nullable, references `invoices.id` |
-| `cancel_at_period_end` | `boolean` | Not null, default `false` |
-| `metadata` | `jsonb` | Default `{}` |
-| `created_at` | `timestamp with time zone` | Not null, default `now()` |
-| `updated_at` | `timestamp with time zone` | Not null, default `now()` |
-| `next_billing_at` | `timestamp with time zone` | Nullable |
-| `trial_ends_at` | `timestamp with time zone` | Nullable |
-| `current_period_start` | `timestamp with time zone` | Not null |
-| `current_period_end` | `timestamp with time zone` | Not null |
-| `paused_at` | `timestamp with time zone` | Nullable |
-| `cancelled_at` | `timestamp with time zone` | Nullable |
+`pending → trialing → active ⇄ charging → retrying → va_fallback → ussd_fallback → whatsapp_fallback → past_due → cancelled`, plus `paused` and `refunded`. Every transition is guarded. An event that isn't valid in the current state is a no-op: no state change, no side effects, no audit row. Every real transition writes an audit entry to a table whose RLS policies forbid updates and deletes.
 
-### `src/schema/invoices.schema.ts`
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | `text` | Primary key, prefix `inv` |
-| `subscription_id` | `text` | Not null, references `subscriptions.id` |
-| `merchant_id` | `text` | Not null, references `merchants.id` |
-| `status` | `InvoiceStatusEnum` | Not null, default `open`. Enum: `open`, `paid`, `void`, `uncollectible`, `pending_retry`, `recovered` |
-| `amount` | `numeric(10,2)` | Not null (amount in kobo) |
-| `amount_paid` | `numeric(10,2)` | Not null, default `0` |
-| `currency` | `text` | Not null, default `NGN` |
-| `description` | `text` | Nullable |
-| `metadata` | `jsonb` | Default `{}` |
-| `due_date` | `timestamp with time zone` | Not null |
-| `paid_at` | `timestamp with time zone` | Nullable |
-| `next_attempt_at` | `timestamp with time zone` | Nullable |
-| `created_at` | `timestamp with time zone` | Default `now()` |
+### Two database scopes
 
-### `src/schema/payment_methods.schema.ts`
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | `text` | Primary key, prefix `pm` |
-| `customer_id` | `text` | Not null, references `customers.id` |
-| `merchant_id` | `text` | Not null, references `merchants.id` |
-| `type` | `PaymentMethodTypeEnum` | Not null. Enum: `card`, `virtual_account`, `ussd` |
-| `nomba_token` | `text` | Not null |
-| `last4` | `text` | Not null (last 4 digits of card/VAN) |
-| `brand` | `text` | Not null (card issuer / bank) |
-| `exp_month` | `text` | Not null |
-| `exp_year` | `text` | Not null |
-| `is_default` | `boolean` | Not null, default `false` |
-| `metadata` | `jsonb` | Default `{}` |
-| `created_at` | `timestamp with time zone` | Default `now()` |
-| `deleted_at` | `timestamp with time zone` | Nullable (soft delete) |
+| Scope | Used by | RLS |
+|---|---|---|
+| **Tenant** | Every authenticated `/v1` request | Enforced — queries run as `railswitch_app` with `app.current_merchant_id` set on a dedicated connection |
+| **System** | Billing worker, provider webhooks, register/login | Bypassed deliberately — this code spans tenants and resolves the merchant from trusted data |
 
-### `src/schema/charge_attempts.schema.ts`
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | `text` | Primary key, prefix `ch` |
-| `invoice_id` | `text` | Not null, references `invoices.id` |
-| `merchant_id` | `text` | Not null, references `merchants.id` |
-| `attempted_at` | `timestamp with time zone` | Default `now()` |
-| `status` | `ChargeStatus` | Not null. Enum: `failed`, `success` |
-| `reason` | `text` | Nullable |
+The exported `db` is an `AsyncLocalStorage`-backed proxy, so the same code runs correctly in either scope; connections are reset (`RESET ROLE`, `RESET app.current_merchant_id`) before returning to the pool, or destroyed if the reset fails.
 
-### `src/schema/audit_log.schema.ts`
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | `uuid` | Primary key, default `gen_random_uuid()` |
-| `merchant_id` | `text` | Not null, references `merchants.id` |
-| `subscription_id` | `text` | Not null, references `subscriptions.id` |
-| `from_state` | `SubscriptionStateEnum` | Not null |
-| `to_state` | `SubscriptionStateEnum` | Not null |
-| `actor` | `ActorEnum` | Nullable. Enum: `merchant`, `system`, `customer` |
-| `reason` | `text` | Nullable |
-| `timestamp` | `timestamp with time zone` | Default `now()` |
+## API overview
 
-Additionally: `audit_log` has restrictive policies blocking all `DELETE` and `UPDATE` — the table is append-only.
+All `/v1` endpoints except register/login require `Authorization: Bearer sk_…`.
 
-### `src/schema/processed_events.schema.ts`
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | `uuid` | Primary key, default `gen_random_uuid()` |
-| `merchant_id` | `text` | Not null, references `merchants.id` |
-| `subscription_id` | `text` | Not null, references `subscriptions.id` |
-| `idempotency_key` | `text` | Not null. Unique constraint per (subscription, key) |
-| `cached_state` | `SubscriptionStateEnum` | Not null |
-| `cached_context` | `jsonb` | Not null |
-| `created_at` | `timestamp with time zone` | Default `now()` |
+| Area | Endpoints |
+|---|---|
+| Auth | `POST /v1/auth/register`, `POST /v1/auth/login`, `GET/POST/DELETE /v1/auth/keys` |
+| Catalogue | `/v1/plans`, `/v1/customers`, `/v1/payment-methods` |
+| Billing | `/v1/subscriptions` (create, pause, resume, cancel, plan-change preview), `/v1/invoices` (+ PDF) |
+| Recovery ops | `/v1/actions/:id/{retry, fallback, send-reminder, mark-recovered, refund}` |
+| Webhooks | `/v1/webhooks/endpoints`, `/v1/webhooks/deliveries` (+ replay), `/v1/webhooks/events` |
+| AI | `/v1/ai/dunning-preview`, `/v1/ai/retry-recommendation`, `/v1/ai/churn` |
+| Customer portal | `POST /v1/portal/customers/:id/portal-link`; signed-token `/v1/portal/subscription/*` |
+| Provider ingress | `POST /webhooks/nomba` |
+| Ops | `GET /health`, `GET /status` (Postgres + Redis probes, version, git SHA) |
 
-## State machine
+## Running locally
 
-### `src/state-machines/subscription.ts`
-| Element | Type | Notes |
-| --- | --- | --- |
-| `SubscriptionContext` | interface | Subscription metadata and runtime state |
-| `DunningPolicy` | interface | Retry and fallback policy configuration |
-| `SubscriptionEvent` | union type | Lifecycle, charge, retry, fallback, and intent events |
-| `subscriptionMachine` | `xstate` machine | States: `pending`, `trialing`, `charging`, `retrying`, `va_fallback`, `ussd_fallback`, `whatsapp_fallback`, `active`, `paused`, `past_due`, `cancelled`, `refunded` |
+```bash
+cp .env.example .env
+docker compose up -d          # Postgres 16 + Redis 7
+npm install
+npx drizzle-kit migrate       # schema, RLS policies, railswitch_app role
+npm run dev                   # http://localhost:3001
+```
 
-## Multi-tenancy
+Without Nomba credentials the engine runs against a deterministic [mock client](src/rails/mock-nomba-client.ts); without `GEMINI_API_KEY`, AI features fall back to rules and templates.
 
-Three layers of defense:
-1. **Per-request scoped repository.** `DrizzleSubscriptionRepository` calls `set_config('app.current_merchant_id', $merchant, true)` inside every transaction, scoping all queries to a single merchant.
-2. **Postgres RLS.** Every tenant-scoped table has a `merchantIsolationPolicy()` that enforces `merchant_id = current_setting('app.current_merchant_id')::text`.
-3. **Internal API middleware.** Every `/internal/v1/*` route passes through `requireInternalAuth` and `extractMerchantId`, ensuring only the Gateway (with the shared secret) can call internal endpoints, and every call is merchant-scoped.
+## Testing
 
-## Migrations
+```bash
+npm test                      # 298 tests: unit + Postgres-backed integration
+npm run test:ai               # AI guardrails + offline eval over the golden set
+npm run eval:dunning          # live Gemini eval (needs GEMINI_API_KEY)
+```
 
-Generated via `npx drizzle-kit generate` and applied via `npx drizzle-kit migrate`.
+CI runs type-checking, lint, migrations against a real Postgres, the full test suite, the production build and a Docker image build on every push and pull request; any failure blocks the merge.
 
-| Migration | What it does |
-| --- | --- |
-| `0000_brave_plazm` | Initial schema — all core tables + RLS |
-| `0003_even_dagger` | Add indexes on subscriptions |
-| `0004_striped_skaar` | Add `customer_id` FK, `policy` defaults, `next_billing_at` |
-| `0005_conscious_scarlet_witch` | Add `processed_events` table + unique constraint |
-| `0006_rich_magneto` | Add `trial_ends_at`, `current_period_start/end`, billing timestamps |
-| `0007_condemned_ben_urich` | Add `name`/`description`/`metadata`/`is_active` on plans, `name`/`updated_at` on customers, `currency`/`description`/`metadata` on invoices, `type`/`metadata` on payment_methods, `refunded` state, `cancel_at_period_end` on subscriptions |
-| `0006_engine_user` | Create `engine_user` Postgres role for RLS-scoped access |
-| `0007_tidy_johnny_storm` | Add `pause_credit` and `trial_credit` to `credit_source` enum |
+Highlights of the suite:
 
-## RLS Infrastructure
+- **State machine and wrapper:** lifecycle transitions, idempotent replay of duplicate events, no-op events, rollback of state, audit and idempotency on persist failure, row-lock acquisition.
+- **Tenancy:** RLS enforcement at the database level plus HTTP-level cross-tenant checks with forged keys and spoofed headers.
+- **Proration:** plan changes, pause and resume.
+- **Retry timing:** payday and liquidity-window snapping, jitter bounds.
+- **AI:** guardrail checks, golden-set PII boundary, broken-output rejection, client failure modes.
 
-Row-level security is enforced at multiple layers:
+## Project structure
 
-1. **`engine_user` Postgres role** — Created by migration `0006_engine_user`. Non-superuser role subject to RLS policies. Available via `ENGINE_USER_URL` in `.env`.
-2. **`setRLSContext` middleware** (`src/middleware/rls.ts`) — Sets `app.current_merchant_id` GUC via `SELECT set_config()` per request. Applied to all merchant-scoped routes.
-3. **Portal skip** — `extractMerchantId` middleware skips RLS for `GET /internal/v1/portal/resolve` (token-based auth).
-4. **Cross-tenant tests** (`tests/tenants/cross_tenant_test.test.ts`) — 5 tests verifying merchants cannot access each other's plans, customers, subscriptions, invoices, or payment methods.
+```
+src/
+  state-machines/   XState subscription machine
+  wrapper/          Transactional wrapper: locking, versioning, idempotency, audit
+  rails/            Orchestrator, cascade coordinator, retry timing, Nomba clients, notification rails
+  workers/ queues/  BullMQ billing worker
+  proration/        Plan change, pause, resume
+  webhooks/         Outbound webhook signing and dispatch
+  ai/               Gemini client, dunning generator + guardrails, retry model, churn scoring
+  db/ middleware/   Tenant-scoped connections, API-key auth, RLS context
+  routes/           /v1 HTTP API
+  schema/ drizzle/  Drizzle schema and migrations (incl. RLS policies)
+tests/              Vitest unit and integration tests
+evals/dunning/      Golden set, thresholds and results for the AI eval
+```
 
-## Test counts
+## Design notes
 
-- **Unit tests (vitest):** 96 — state machine, wrapper, billing handler, orchestrator, retry timing, proration, utils
-- **Cross-tenant tests:** 5 — RLS isolation across all resource types
-- **Integration tests (bash):** 113 — full API coverage including auth, CRUD, lifecycle, portal, webhooks, error handling
+- **Why a state machine?** Billing bugs are almost always illegal transitions under concurrency. Making states and guards explicit turns "can this happen?" into a question the code answers, and makes the lifecycle testable as data.
+- **Why enforce RLS instead of trusting `WHERE` clauses?** A single missing filter is a cross-tenant data leak. With RLS enforced per request, that mistake returns zero rows instead of another merchant's data.
+- **Why guardrails *and* evals for the LLM?** The same checks run at runtime (to protect customers today) and offline (to measure the model and gate prompt changes), so what is measured is exactly what is enforced.
 
+## Credits
+
+RailSwitch began as a team project for the Nomba Hackathon 2026. This repository is the standalone engine, with history preserved. It was led by [Abdurrahman Balogun](https://github.com/mayowa-sys), who owns the payment-recovery core: the state machine, cascade, retry timing and AI recovery features. Since then it has been hardened for multi-tenant production use: enforced RLS, API-key auth, guardrailed AI and strict CI. Thanks to the teammates who built the original dashboard, portal and gateway.
+
+MIT licensed.

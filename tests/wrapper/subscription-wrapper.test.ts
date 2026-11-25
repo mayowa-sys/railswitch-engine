@@ -1,4 +1,3 @@
-// services/engine/tests/wrapper/subscription-wrapper.test.ts
 
 import { describe, it, expect, vi } from 'vitest';
 import { SubscriptionWrapper } from '../../src/wrapper/subscription-wrapper.js';

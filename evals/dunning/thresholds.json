@@ -1,0 +1,7 @@
+{
+  "description": "Minimum pass rates for a live eval run (scripts/eval-dunning.ts). Guard checks block copy at runtime, so a low guard pass rate means customers mostly see the template. Raise these as the prompt improves.",
+  "minGuardPassRate": 0.9,
+  "minQualityPassRate": 0.8,
+  "maxFallbackRate": 0.15,
+  "minSamplesPerCase": 3
+}

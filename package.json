@@ -12,6 +12,8 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:ai": "vitest run tests/ai",
+    "eval:dunning": "tsx scripts/eval-dunning.ts",
     "lint": "eslint src tests --ext .ts",
     "format": "prettier --write src/",
     "migration:generate": "npx drizzle-kit generate",

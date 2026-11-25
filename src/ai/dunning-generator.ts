@@ -15,6 +15,7 @@
 
 import { getGeminiClient, type GeminiClient } from './gemini-client.js';
 import { GlobalLogger } from '../utils/logger.js';
+import { checkDunningOutput, guardFailures } from './dunning-checks.js';
 
 export type DunningChannel = 'whatsapp' | 'email';
 export type CascadeStage = 'retrying' | 'va_fallback' | 'whatsapp_fallback' | 'past_due';
@@ -55,7 +56,9 @@ export interface GenerateDunningOptions {
   disable?: boolean;
 }
 
-const SYSTEM_PROMPT = `You are a professional payments recovery assistant for a Nigerian subscription business.
+export const GENERATION_TEMPERATURE = 0.5;
+
+export const SYSTEM_PROMPT = `You are a professional payments recovery assistant for a Nigerian subscription business.
 You write short, warm, non-shaming reminders to customers whose card payments failed.
 Rules:
 - Never guilt-trip or threaten. Assume the failure was a bank issue, not intent.
@@ -81,14 +84,22 @@ export async function generateDunningMessage(
   }
 
   const userPrompt = buildUserPrompt(ctx);
-  const result = await client.generateJSON<{ subject?: unknown; body?: unknown }>({
-    systemPrompt: SYSTEM_PROMPT,
-    userPrompt,
-    temperature: 0.5,
-    maxOutputTokens: 400,
-  });
+  let result: { subject?: unknown; body?: unknown } | null;
+  try {
+    result = await client.generateJSON<{ subject?: unknown; body?: unknown }>({
+      systemPrompt: SYSTEM_PROMPT,
+      userPrompt,
+      temperature: GENERATION_TEMPERATURE,
+      maxOutputTokens: 400,
+    });
+  } catch (err) {
+    // GeminiClient already swallows its own errors; this protects callers
+    // from any other client implementation that throws.
+    logger.warn('Dunning generation threw — falling back', { error: (err as Error).message });
+    return { ...fallback, generated: false };
+  }
 
-  if (!result) {
+  if (!result || typeof result !== 'object') {
     return { ...fallback, generated: false };
   }
   const subject = typeof result.subject === 'string' ? result.subject.trim() : '';
@@ -97,14 +108,19 @@ export async function generateDunningMessage(
     logger.warn('Gemini response missing subject/body — falling back');
     return { ...fallback, generated: false };
   }
-  if (body.length > 2000 || subject.length > 200) {
-    logger.warn('Gemini output exceeded length caps — falling back');
+
+  // Runtime guardrail: the same 'guard' checks the eval harness scores.
+  const failures = guardFailures(checkDunningOutput(ctx, { subject, body }));
+  if (failures.length > 0) {
+    logger.warn('Generated dunning copy failed guardrails — falling back', {
+      checks: failures.map((f) => f.id),
+    });
     return { ...fallback, generated: false };
   }
   return { subject, body, generated: true };
 }
 
-function buildUserPrompt(ctx: DunningContext): string {
+export function buildUserPrompt(ctx: DunningContext): string {
   const lines: string[] = [];
   lines.push(`Channel: ${ctx.channel}`);
   lines.push(`Cascade stage: ${ctx.stage}`);

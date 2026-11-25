@@ -102,10 +102,39 @@ describe('generateDunningMessage', () => {
 
   it('trims whitespace from generated fields', async () => {
     const client = makeMockClient({
-      reply: { subject: '  header  ', body: '\n\nbody\n\n' },
+      reply: { subject: '  header  ', body: '\n\nHi Ada, ₦15,000 is due.\n\n' },
     });
     const r = await generateDunningMessage(ctx, fallback, { client });
     expect(r.subject).toBe('header');
-    expect(r.body).toBe('body');
+    expect(r.body).toBe('Hi Ada, ₦15,000 is due.');
+  });
+
+  it('falls back when the client throws', async () => {
+    const client = makeMockClient({ throws: true });
+    const r = await generateDunningMessage(ctx, fallback, { client });
+    expect(r.generated).toBe(false);
+    expect(r.body).toBe(fallback.body);
+  });
+
+  it('falls back when generated copy omits the amount (guardrail)', async () => {
+    const client = makeMockClient({ reply: { subject: 'Reminder', body: 'Hi Ada, please update your card.' } });
+    const r = await generateDunningMessage(ctx, fallback, { client });
+    expect(r.generated).toBe(false);
+  });
+
+  it('falls back when generated copy is threatening (guardrail)', async () => {
+    const client = makeMockClient({
+      reply: { subject: 'Final warning', body: 'Ada, pay ₦15,000 now or we take legal action.' },
+    });
+    const r = await generateDunningMessage(ctx, fallback, { client });
+    expect(r.generated).toBe(false);
+  });
+
+  it('falls back when generated copy leaks the surname (guardrail)', async () => {
+    const client = makeMockClient({
+      reply: { subject: 'Reminder', body: 'Hi Ada Lovelace, ₦15,000 is due.' },
+    });
+    const r = await generateDunningMessage(ctx, fallback, { client });
+    expect(r.generated).toBe(false);
   });
 });

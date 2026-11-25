@@ -85,7 +85,7 @@ Without Nomba credentials the engine runs against a deterministic [mock client](
 ## Testing
 
 ```bash
-npm test                      # 298 tests: unit + Postgres-backed integration
+npm test                      # 299 tests: unit + Postgres-backed integration
 npm run test:ai               # AI guardrails + offline eval over the golden set
 npm run eval:dunning          # live Gemini eval (needs GEMINI_API_KEY)
 ```

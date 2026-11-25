@@ -45,7 +45,7 @@ export async function requireApiKey(req: Request, res: Response, next: NextFunct
     unauthorized(res, 'Malformed API key');
     return;
   }
-  const [, mode, merchantId] = match;
+  const mode = match[1] as 'live' | 'test';
   const keyHash = hashApiKey(token);
 
   let row: { merchant_id: string; revoked_at: Date | null } | undefined;
@@ -65,15 +65,18 @@ export async function requireApiKey(req: Request, res: Response, next: NextFunct
     unauthorized(res, row ? 'API key has been revoked' : 'Invalid API key');
     return;
   }
-  const a = Buffer.from(row.merchant_id);
-  const b = Buffer.from(merchantId);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+  // The key must encode exactly the merchant that owns it. Merchant IDs can
+  // contain '_' (nanoid alphabet), so compare against the stored owner rather
+  // than parsing the ID out of the key with a regex.
+  const expected = Buffer.from(`sk_${mode}_${row.merchant_id}__`);
+  const actual = Buffer.from(token.slice(0, expected.length));
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
     unauthorized(res, 'Invalid API key');
     return;
   }
 
   req.merchantId = row.merchant_id;
-  req.apiKeyMode = mode as 'live' | 'test';
+  req.apiKeyMode = mode;
   next();
 }
 

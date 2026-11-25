@@ -70,6 +70,33 @@ describe('API key authentication', () => {
     expect(res.status).toBe(200);
   });
 
+  it('accepts keys for merchant IDs containing underscores', async () => {
+    // Regression: nanoid IDs can contain '_' and end with it; a lazy regex
+    // parse of `sk_test_<id>__<random>` mis-split these and rejected valid keys.
+    const trickyId = `mer_x_${run}_`;
+    const key = `sk_test_${trickyId}__${randomBytes(16).toString('base64url')}`;
+    await db.insert(MerchantsTable).values({
+      id: trickyId,
+      name: 'Tricky',
+      email: `tricky+${run}@test.dev`,
+      company: 'Tricky',
+      password_hash: 'x',
+    });
+    await db.insert(ApiKeysTable).values({
+      merchant_id: trickyId,
+      key_hash: hashApiKey(key),
+      key_prefix: key.slice(0, 22),
+      type: 'test',
+    });
+    try {
+      const res = await request(app).get('/v1/plans').set('Authorization', `Bearer ${key}`);
+      expect(res.status).toBe(200);
+    } finally {
+      await db.delete(ApiKeysTable).where(eq(ApiKeysTable.merchant_id, trickyId));
+      await db.delete(MerchantsTable).where(eq(MerchantsTable.id, trickyId));
+    }
+  });
+
   it('keeps register and login public', async () => {
     const res = await request(app).post('/v1/auth/login').send({ email: 'nobody@test.dev', password: 'wrong-password' });
     expect(res.status).toBe(401);

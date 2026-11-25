@@ -13,14 +13,16 @@ import { applyResumeAdjustments } from '../proration/resume-plan.js';
 
 export const portalRouter = Router();
 
+const DEV_PORTAL_SECRET = 'railswitch-portal-secret-dev';
 const PORTAL_SECRET = process.env.PORTAL_SECRET;
-if (!PORTAL_SECRET) {
-  console.error('[portal] FATAL: PORTAL_SECRET is not set — portal tokens are insecure!');
+if (!PORTAL_SECRET && process.env.NODE_ENV === 'production') {
+  // A missing secret would let anyone forge customer portal tokens.
+  throw new Error('PORTAL_SECRET must be set in production');
 }
 const PORTAL_URL = process.env.PORTAL_URL || 'http://localhost:3100';
 
 export function signToken(customerId: string, merchantId: string): string {
-  const secret = PORTAL_SECRET || 'railswitch-portal-secret-dev';
+  const secret = PORTAL_SECRET || DEV_PORTAL_SECRET;
   const payload = Buffer.from(JSON.stringify({ customerId, merchantId, exp: Date.now() + 7 * 86400000 }));
   const sig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
   return `${payload.toString('base64url')}.${sig}`;
@@ -33,7 +35,7 @@ export function generatePortalLink(customerId: string, merchantId: string): stri
 
 export function verifyToken(token: string): { customerId: string; merchantId: string } | null {
   try {
-    const secret = PORTAL_SECRET || 'railswitch-portal-secret-dev';
+    const secret = PORTAL_SECRET || DEV_PORTAL_SECRET;
     const [payloadB64, sig] = token.split('.');
     const payload = Buffer.from(payloadB64, 'base64url');
     const expectedSig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
@@ -130,7 +132,7 @@ function authPortal(req: Request, res: Response): { customerId: string; merchant
   return data;
 }
 
-portalRouter.get('/v1/portal/subscription', async (req: Request, res: Response) => {
+portalRouter.get('/subscription', async (req: Request, res: Response) => {
   try {
     const auth = authPortal(req, res);
     if (!auth) return;
@@ -151,7 +153,7 @@ portalRouter.get('/v1/portal/subscription', async (req: Request, res: Response) 
   }
 });
 
-portalRouter.post('/v1/portal/subscription/pause', async (req: Request, res: Response) => {
+portalRouter.post('/subscription/pause', async (req: Request, res: Response) => {
   try {
     const auth = authPortal(req, res);
     if (!auth) return;
@@ -184,7 +186,7 @@ portalRouter.post('/v1/portal/subscription/pause', async (req: Request, res: Res
   }
 });
 
-portalRouter.post('/v1/portal/subscription/resume', async (req: Request, res: Response) => {
+portalRouter.post('/subscription/resume', async (req: Request, res: Response) => {
   try {
     const auth = authPortal(req, res);
     if (!auth) return;
@@ -217,7 +219,7 @@ portalRouter.post('/v1/portal/subscription/resume', async (req: Request, res: Re
   }
 });
 
-portalRouter.post('/v1/portal/subscription/cancel', async (req: Request, res: Response) => {
+portalRouter.post('/subscription/cancel', async (req: Request, res: Response) => {
   try {
     const auth = authPortal(req, res);
     if (!auth) return;

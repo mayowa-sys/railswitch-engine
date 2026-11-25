@@ -6,8 +6,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { createStatusHandler } from './status/route.js';
 import { probePostgres, probeRedis } from './status/probes.js';
-import { requireInternalAuth } from './middleware/auth.js';
-import { extractMerchantId } from './middleware/merchant.js';
+import { requireApiKey, requireApiKeyExcept } from './middleware/api-key.js';
 import { setRLSContext } from './middleware/rls.js';
 import { requestId } from './middleware/request-id.js';
 import { plansRouter } from './routes/plans.js';
@@ -15,12 +14,10 @@ import { customersRouter } from './routes/customers.js';
 import { subscriptionsRouter } from './routes/subscriptions.js';
 import { invoicesRouter } from './routes/invoices.js';
 import { paymentMethodsRouter } from './routes/payment_methods.js';
-import { debugRouter } from './routes/debug.js';
 import { webhooksRouter } from './routes/webhooks.js';
 import { authRouter } from './routes/auth.js';
 import { auditRouter } from './routes/audit.js';
 import { webhookManagementRouter } from './routes/webhook_management.js';
-import { cleanupRouter } from './routes/cleanup.js';
 import { portalRouter } from './routes/portal.js';
 import { merchantActionsRouter } from './routes/merchant-actions.js';
 import { aiRouter } from './routes/ai.js';
@@ -58,29 +55,47 @@ app.get(
   }),
 );
 
-// Debug / developer tooling — unprotected.
-app.use('/debug', debugRouter);
+// Provider webhook ingress — authenticated by the Nomba HMAC signature, not
+// an API key. Runs in system scope: the handler resolves the merchant from
+// the payload.
+app.use('/webhooks', webhooksRouter);
 
-// Internal API — gateway-only, protected by shared secret + merchant scoping.
-app.use('/internal/v1/plans', requireInternalAuth, extractMerchantId, setRLSContext, plansRouter);
-app.use('/internal/v1/customers', requireInternalAuth, extractMerchantId, setRLSContext, customersRouter);
-app.use('/internal/v1/subscriptions', requireInternalAuth, extractMerchantId, setRLSContext, subscriptionsRouter);
-app.use('/internal/v1/invoices', requireInternalAuth, extractMerchantId, setRLSContext, invoicesRouter);
-app.use('/internal/v1/payment-methods', requireInternalAuth, extractMerchantId, setRLSContext, paymentMethodsRouter);
+// Merchant auth. Register/login are public (rate-limited); key management
+// requires an existing key.
+app.use(
+  '/v1/auth',
+  authLimiter,
+  requireApiKeyExcept([
+    { method: 'POST', path: '/register' },
+    { method: 'POST', path: '/login' },
+  ]),
+  authRouter,
+);
 
-// Internal webhook ingress — auth only, no merchant scoping (engine handler resolves merchant from Nomba payload).
-app.use('/internal/v1/webhooks', requireInternalAuth, webhooksRouter);
+// Customer self-service portal. Issuing a link needs the merchant's API key;
+// everything else is authorised by a signed, expiring customer token.
+app.use(
+  '/v1/portal',
+  (req: Request, res: Response, next: NextFunction) =>
+    req.path.startsWith('/customers/') ? requireApiKey(req, res, () => setRLSContext(req, res, next)) : next(),
+  portalRouter,
+);
 
-// Auth — internal auth only, no merchant scoping (login/register create/verify merchants).
-app.use('/internal/v1/auth', requireInternalAuth, extractMerchantId, authLimiter, authRouter);
-app.use('/internal/v1/audit-logs', requireInternalAuth, extractMerchantId, setRLSContext, auditRouter);
+// Tenant-scoped API: API key → merchant → pinned RLS-enforced connection.
+const tenant = [requireApiKey, setRLSContext];
+app.use('/v1/plans', ...tenant, plansRouter);
+app.use('/v1/customers', ...tenant, customersRouter);
+app.use('/v1/subscriptions', ...tenant, subscriptionsRouter);
+app.use('/v1/invoices', ...tenant, invoicesRouter);
+app.use('/v1/payment-methods', ...tenant, paymentMethodsRouter);
+app.use('/v1/audit-logs', ...tenant, auditRouter);
+app.use('/v1/webhook-endpoints', ...tenant, webhookManagementRouter);
+app.use('/v1/actions', ...tenant, merchantActionsRouter);
+app.use('/v1/ai', ...tenant, aiRouter);
 
-// Webhook management — gateway-only, CRUD + delivery logs.
-app.use('/internal/v1/webhooks/management', requireInternalAuth, extractMerchantId, setRLSContext, webhookManagementRouter);
-app.use('/internal/v1/cleanup', requireInternalAuth, extractMerchantId, setRLSContext, cleanupRouter);
-app.use('/internal/v1/portal', requireInternalAuth, extractMerchantId, portalRouter);
-app.use('/internal/v1/actions', requireInternalAuth, extractMerchantId, setRLSContext, merchantActionsRouter);
-app.use('/internal/v1/ai', requireInternalAuth, extractMerchantId, setRLSContext, aiRouter);
+app.use((_req: Request, res: Response) => {
+  res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Route not found' } });
+});
 
 // Global Express error handler — catches unhandled errors and returns JSON.
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {

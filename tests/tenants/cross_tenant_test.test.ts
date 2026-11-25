@@ -17,6 +17,9 @@ import { PaymentMethodsTable } from "../../src/schema/payment_methods.schema";
 import { SubscriptionsTable } from "../../src/schema/subscriptions.schema";
 import { InvoicesTable } from "../../src/schema/invoices.schema";
 import { eq, inArray } from "drizzle-orm";
+import { randomBytes } from "node:crypto";
+import { ApiKeysTable } from "../../src/schema/api_keys.schema";
+import { hashApiKey } from "../../src/middleware/api-key";
 
 const myOwndb = drizzle(process.env.DATABASE_URL!);
 type Tables = typeof CustomersTable | typeof PaymentMethodsTable | typeof InvoicesTable | typeof SubscriptionsTable | typeof PlansTable;
@@ -27,12 +30,23 @@ type FactoryReturnType = {
 }
 
 const tenantScopedResources = [
-  { endpoint: "/internal/v1/plans", resourceType: "plan" },
-  { endpoint: "/internal/v1/customers", resourceType: "customer" },
-  { endpoint: "/internal/v1/subscriptions", resourceType: "subscription" },
-  { endpoint: "/internal/v1/invoices", resourceType: "invoice" },
-  { endpoint: "/internal/v1/payment-methods", resourceType: "payment_method" },
+  { endpoint: "/v1/plans", resourceType: "plan" },
+  { endpoint: "/v1/customers", resourceType: "customer" },
+  { endpoint: "/v1/subscriptions", resourceType: "subscription" },
+  { endpoint: "/v1/invoices", resourceType: "invoice" },
+  { endpoint: "/v1/payment-methods", resourceType: "payment_method" },
 ];
+
+async function createApiKey(merchantId: string): Promise<string> {
+  const raw = `sk_test_${merchantId}__${randomBytes(16).toString("base64url")}`;
+  await myOwndb.insert(ApiKeysTable).values({
+    merchant_id: merchantId,
+    key_hash: hashApiKey(raw),
+    key_prefix: raw.slice(0, 22),
+    type: "test",
+  });
+  return raw;
+}
 
 async function createTestMerchant(name: string, email: string) {
   const [merchant] = await myOwndb
@@ -176,12 +190,14 @@ describe.each(tenantScopedResources)(
   ({ endpoint, resourceType }: { endpoint: string; resourceType: string }) => {
     let merchantA: typeof MerchantsTable.$inferSelect;
     let merchantB: typeof MerchantsTable.$inferSelect;
+    let merchantBKey: string;
     let resourceId: string;
     let testDependencies: Dependency[] = [];
 
     beforeAll(async () => {
       merchantA = await createTestMerchant("merchant a", "merchanta@gmail.com");
       merchantB = await createTestMerchant("merchant b", "merchantb@gmail.com");
+      merchantBKey = await createApiKey(merchantB.id);
     });
 
     beforeEach(async () => {
@@ -204,6 +220,9 @@ describe.each(tenantScopedResources)(
 
     afterAll(async () => {
       await myOwndb
+        .delete(ApiKeysTable)
+        .where(inArray(ApiKeysTable.merchant_id, [merchantA.id, merchantB.id]));
+      await myOwndb
         .delete(MerchantsTable)
         .where(inArray(MerchantsTable.id, [merchantA.id, merchantB.id]));
     });
@@ -211,10 +230,18 @@ describe.each(tenantScopedResources)(
     it("returns 404 when Merchant B reads Merchant A's resource", async () => {
       const res = await request(app)
         .get(`${endpoint}/${resourceId}`)
-        .set("Authorization", `Bearer sk_test_mockmerchantb`)
-        .set("x-internal-auth", process.env.INTERNAL_AUTH_SECRET!)
-        .set("x-merchant-id", merchantB.id);
+        .set("Authorization", `Bearer ${merchantBKey}`)
+        // A spoofed merchant header must be ignored: identity comes from the key.
+        .set("x-merchant-id", merchantA.id);
       expect(res.status).toBe(404);
+    });
+
+    it("rejects a forged key that names Merchant A", async () => {
+      const forged = `sk_test_${merchantA.id}__${randomBytes(16).toString("base64url")}`;
+      const res = await request(app)
+        .get(`${endpoint}/${resourceId}`)
+        .set("Authorization", `Bearer ${forged}`);
+      expect(res.status).toBe(401);
     });
   },
 );

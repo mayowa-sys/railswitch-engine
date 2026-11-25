@@ -1,6 +1,6 @@
 // services/engine/src/routes/ai.ts
 //
-// Internal AI routes. Not customer-facing — mounted under /internal/v1/ai
+// AI routes — mounted under /v1/ai (API key + tenant scope).
 // and reached by the gateway proxy. Every endpoint validates input and
 // returns typed JSON.
 
@@ -12,7 +12,7 @@ import { scoreSubscriptionChurn, scoreMerchantChurn } from '../ai/churn-features
 export const aiRouter = Router();
 
 /**
- * POST /internal/v1/ai/dunning-preview
+ * POST /v1/ai/dunning-preview
  * Returns a generated dunning message (or the template fallback if AI is
  * unavailable). Merchants can use this to preview copy before sending.
  */
@@ -54,7 +54,7 @@ aiRouter.post('/dunning-preview', async (req: Request, res: Response) => {
 });
 
 /**
- * POST /internal/v1/ai/retry-recommendation
+ * POST /v1/ai/retry-recommendation
  * Returns the top-N retry slots ranked by predicted success probability.
  */
 aiRouter.post('/retry-recommendation', (req: Request, res: Response) => {
@@ -88,7 +88,7 @@ aiRouter.post('/retry-recommendation', (req: Request, res: Response) => {
 });
 
 /**
- * GET /internal/v1/ai/churn/:subscriptionId
+ * GET /v1/ai/churn/:subscriptionId
  * Score churn risk for one subscription.
  */
 aiRouter.get('/churn/:subscriptionId', async (req: Request, res: Response) => {
@@ -102,7 +102,7 @@ aiRouter.get('/churn/:subscriptionId', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /internal/v1/ai/churn
+ * GET /v1/ai/churn
  * Score churn risk for every subscription belonging to the caller merchant.
  */
 aiRouter.get('/churn', async (req: Request, res: Response) => {

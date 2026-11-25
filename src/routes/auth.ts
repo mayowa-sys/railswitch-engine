@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
+import { hashApiKey } from '../middleware/api-key.js';
 import { hash, compare } from 'bcryptjs';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
@@ -11,7 +12,7 @@ export const authRouter = Router();
 function generateApiKey(merchantId: string, mode: 'live' | 'test'): { raw: string; hash: string; prefix: string } {
   const random = randomBytes(20).toString('base64url');
   const raw = `sk_${mode}_${merchantId}__${random}`;
-  const hashVal = createHash('sha256').update(raw).digest('hex');
+  const hashVal = hashApiKey(raw);
   const prefix = raw.slice(0, 22);
   return { raw, hash: hashVal, prefix };
 }
